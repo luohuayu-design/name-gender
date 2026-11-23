@@ -1,5 +1,5 @@
 // 注意：升级模型时，这里的 CACHE 和 model.json 的版本号要跟 index.html 的 MODEL_VERSION 一起改
-const CACHE = 'name-gender-v4.4';
+const CACHE = 'name-gender-v4.5';
 const ASSETS = ['./', './index.html', './model.json?v=4.2', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', function (e) {

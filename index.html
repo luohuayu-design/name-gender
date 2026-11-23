@@ -144,6 +144,8 @@
   .contrib.show { display: block; }
   .contrib-title { font-size: 13px; color: #65676b; margin-bottom: 6px; }
   .contrib-note { font-size: 12px; color: #a1a5aa; line-height: 1.6; margin-bottom: 4px; }
+  .contrib-sub { font-size: 12px; color: #65676b; margin: 10px 0 2px; }
+  .ct-ch.pair { width: 52px; font-size: 13px; }
   .ct-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; }
   .ct-ch { flex: 0 0 auto; width: 20px; text-align: center; font-weight: 600; font-size: 15px; }
   .ct-track { position: relative; flex: 1; height: 10px; background: #eef0f3; border-radius: 999px; overflow: hidden; }
@@ -256,7 +258,7 @@
       3 模型集成 · 每个 237 万参数 · 字向量 128 维 · 位置特征 · 人名词典<br>
       支持批量判断、CSV 导出与字符贡献分析<br>
       结果仅供参考，中性名字本身就没有固定答案<br>
-      v4.4 · 2026-11-23
+      v4.5 · 2026-11-23
     </div>
   </div>
 
@@ -498,23 +500,28 @@ function predict(name) {
   return Object.assign({ p: s.p, z: s.z, source: '模型' }, base);
 }
 
-// 字符贡献 = Shapley 值：把所有「去掉部分字」的组合都算一遍，
-// 每个字取它在各种组合里的平均边际影响（单位：百分点），
-// 各字相加 = 最终男性概率 − 50%
-function contributionsOf(chars) {
+// 所有「保留部分字」子集的名字概率；空集按 50% 算
+function subsetProbs(chars) {
   const n = chars.length;
-  if (n < 2) return [];
-
   const cache = new Map();
   function pOf(mask) {
     if (cache.has(mask)) return cache.get(mask);
     const sub = [];
     for (let i = 0; i < n; i++) if (mask & (1 << i)) sub.push(chars[i]);
     const s = sub.length ? scoreOf(sub) : null;
-    const p = s ? s.p : 0.5;   // 一个字都不给时按 50% 算
+    const p = s ? s.p : 0.5;
     cache.set(mask, p);
     return p;
   }
+  return { n: n, pOf: pOf };
+}
+
+// 单字贡献 = Shapley 值：该字在所有组合里的平均边际影响（百分点），
+// 各字相加 = 最终男性概率 − 50%
+function contributionsOf(chars) {
+  const sub = subsetProbs(chars);
+  const n = sub.n;
+  if (n < 2) return [];
 
   const fact = [1];
   for (let i = 1; i <= n; i++) fact[i] = fact[i - 1] * i;
@@ -525,11 +532,43 @@ function contributionsOf(chars) {
     for (let mask = 0; mask < (1 << n); mask++) {
       if (mask & (1 << i)) continue;
       let k = 0;
-      for (let m = mask; m; m &= m - 1) k++;   // mask 里有几个字
+      for (let m = mask; m; m &= m - 1) k++;
       const w = fact[k] * fact[n - k - 1] / fact[n];
-      v += w * (pOf(mask | (1 << i)) - pOf(mask));
+      v += w * (sub.pOf(mask | (1 << i)) - sub.pOf(mask));
     }
     out.push({ ch: chars[i], dp: v * 100 });
+  }
+  return out;
+}
+
+// 相邻两字的组合贡献 = Shapley 交互指数：
+// 两个字一起出现，比各自单独出现多出（或少掉）的男性概率，单位百分点
+function interactionsOf(chars) {
+  const sub = subsetProbs(chars);
+  const n = sub.n;
+  if (n < 2) return [];
+
+  const fact = [1];
+  for (let i = 1; i <= n; i++) fact[i] = fact[i - 1] * i;
+
+  const out = [];
+  for (let i = 0; i + 1 < n; i++) {
+    const j = i + 1;
+    const restMask = ((1 << n) - 1) & ~(1 << i) & ~(1 << j);
+    let v = 0;
+    let s = restMask;
+    while (true) {
+      let k = 0;
+      for (let m = s; m; m &= m - 1) k++;
+      const w = fact[k] * fact[n - k - 2] / fact[n - 1];
+      const both = s | (1 << i) | (1 << j);
+      const onlyI = s | (1 << i);
+      const onlyJ = s | (1 << j);
+      v += w * (sub.pOf(both) - sub.pOf(onlyI) - sub.pOf(onlyJ) + sub.pOf(s));
+      if (s === 0) break;
+      s = (s - 1) & restMask;
+    }
+    out.push({ pair: chars[i] + chars[j], v: v * 100 });
   }
   return out;
 }
@@ -539,10 +578,15 @@ function renderContrib(box, chars) {
   box.textContent = '';
   box.classList.remove('show');
   if (!chars || chars.length < 2) return;
-  const items = contributionsOf(chars);
+
+  const singles = contributionsOf(chars);
+  let pairs = interactionsOf(chars);
+  pairs = pairs.filter(function (it) { return Math.abs(it.v) >= 0.1; });
+
   let max = 0;
-  for (const it of items) max = Math.max(max, Math.abs(it.dp));
-  if (!items.length || max < 0.05) return;
+  for (const it of singles) max = Math.max(max, Math.abs(it.dp));
+  for (const it of pairs) max = Math.max(max, Math.abs(it.v));
+  if (!singles.length || max < 0.05) return;
 
   const title = document.createElement('div');
   title.className = 'contrib-title';
@@ -551,35 +595,52 @@ function renderContrib(box, chars) {
 
   const note = document.createElement('div');
   note.className = 'contrib-note';
-  note.textContent = 'Shapley 值：把所有「去掉部分字」的组合平均一遍，算出每个字对男性概率的影响；各字相加 = 最终概率 − 50%。';
+  note.textContent = '单字：Shapley 值，各字相加 = 最终概率 − 50%。';
   box.appendChild(note);
 
-  for (const it of items) {
+  function addRow(label, value, isPair) {
     const row = document.createElement('div');
     row.className = 'ct-row';
 
     const ch = document.createElement('span');
-    ch.className = 'ct-ch';
-    ch.textContent = it.ch;
+    ch.className = 'ct-ch' + (isPair ? ' pair' : '');
+    ch.textContent = label;
 
     const track = document.createElement('span');
     track.className = 'ct-track';
     const fill = document.createElement('i');
-    fill.className = 'ct-fill ' + (it.dp >= 0 ? 'm' : 'f');
-    fill.style.width = Math.max(2, Math.abs(it.dp) / max * 50) + '%';
-    if (it.dp >= 0) fill.style.left = '50%';
+    fill.className = 'ct-fill ' + (value >= 0 ? 'm' : 'f');
+    fill.style.width = Math.max(2, Math.abs(value) / max * 50) + '%';
+    if (value >= 0) fill.style.left = '50%';
     else fill.style.right = '50%';
     track.appendChild(fill);
 
     const val = document.createElement('span');
     val.className = 'ct-val';
-    val.textContent = (it.dp >= 0 ? '+' : '') + it.dp.toFixed(1);
+    val.textContent = (value >= 0 ? '+' : '') + value.toFixed(1);
 
     row.appendChild(ch);
     row.appendChild(track);
     row.appendChild(val);
     box.appendChild(row);
   }
+
+  for (const it of singles) addRow(it.ch, it.dp, false);
+
+  if (pairs.length) {
+    const sub = document.createElement('div');
+    sub.className = 'contrib-sub';
+    sub.textContent = '相邻两字组合（协同效应，不与上方相加）';
+    box.appendChild(sub);
+
+    for (const it of pairs) addRow(it.pair, it.v, true);
+
+    const note2 = document.createElement('div');
+    note2.className = 'contrib-note';
+    note2.textContent = '组合 = Shapley 交互指数：正数表示两字一起出现比分开更偏男，负数相反。';
+    box.appendChild(note2);
+  }
+
   box.classList.add('show');
 }
 
