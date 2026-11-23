@@ -7,6 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1877f2">
+<link rel="manifest" href="./manifest.json">
 <title>姓名性别判断</title>
 <style>
   * { box-sizing: border-box; }
@@ -116,6 +117,21 @@
   .warn { margin-top: 10px; font-size: 13px; color: #b26a00; background: #fff8e1; border-radius: 8px; padding: 8px 12px; }
   .warn:empty { display: none; }
 
+  .history { margin-top: 16px; }
+  .history-title { font-size: 13px; color: #65676b; margin-bottom: 8px; }
+  #historyList { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    border: 0;
+    background: #eef3ff;
+    color: #1877f2;
+    font-size: 13px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .chip:active { transform: scale(0.96); }
+
   .footer {
     margin-top: 22px;
     font-size: 12px;
@@ -154,16 +170,22 @@
       </div>
     </div>
 
+    <div id="history" class="history" style="display:none">
+      <div class="history-title">最近查询</div>
+      <div id="historyList"></div>
+    </div>
+
     <div class="footer">
-      39.8 万参数小模型 · 姓/名/搭配三通道 · 温度校准 · 测试准确率 99.7%<br>
+      40.0 万参数小模型 · 姓/名/搭配三通道 · 测试准确率 99.7%<br>
       结果仅供参考，中性名字本身就没有固定答案<br>
-      v3.0 · 2026-11-23
+      v3.1 · 2026-11-23
     </div>
   </div>
 
 <script>
 'use strict';
 
+const MODEL_VERSION = '3.1';
 let model = null;
 const charToId = new Map();
 
@@ -172,9 +194,41 @@ const goEl = document.getElementById('go');
 const statusEl = document.getElementById('status');
 const resultEl = document.getElementById('result');
 
-// 加载模型（带时间戳，避免浏览器/CDN 用到缓存的旧模型）
-fetch('./model.json?v=' + Date.now())
-  .then(function (r) { return r.json(); })
+// 加载模型：文件名带版本号，同一版本走缓存，发版后自动换新
+function loadModel() {
+  return fetch('./model.json?v=' + MODEL_VERSION)
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const total = Number(r.headers.get('Content-Length') || 0);
+      if (!r.body || !r.body.getReader) return r.json();
+      const reader = r.body.getReader();
+      const chunks = [];
+      let received = 0;
+      function pump() {
+        return reader.read().then(function (res) {
+          if (res.done) {
+            const buf = new Uint8Array(received);
+            let off = 0;
+            for (let i = 0; i < chunks.length; i++) {
+              buf.set(chunks[i], off);
+              off += chunks[i].length;
+            }
+            return JSON.parse(new TextDecoder().decode(buf));
+          }
+          chunks.push(res.value);
+          received += res.value.length;
+          const mb = (received / 1048576).toFixed(1);
+          statusEl.textContent = total
+            ? '正在加载模型 ' + Math.min(99, Math.round(received / total * 100)) + '%（' + mb + ' MB）'
+            : '正在加载模型 ' + mb + ' MB';
+          return pump();
+        });
+      }
+      return pump();
+    });
+}
+
+loadModel()
   .then(function (m) {
     model = m;
     m.vocab.forEach(function (ch, i) { charToId.set(ch, i); });
@@ -186,6 +240,11 @@ fetch('./model.json?v=' + Date.now())
     statusEl.textContent = '模型加载失败，请刷新页面重试';
     statusEl.className = 'status err';
   });
+
+// 注册 Service Worker，支持离线打开
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(function () {});
+}
 
 // 与 train.js 完全一致的复姓表
 const COMPOUND_SURNAMES = new Set([
@@ -358,7 +417,57 @@ function render() {
   warn.textContent = r.unknown.length ? '模型不认识、已忽略：' + r.unknown.join('、') : '';
 
   resultEl.classList.add('show');
+  addHistory(name, r.p);
 }
+
+// ── 最近查询（只存在本机浏览器，不上传） ──
+const HISTORY_KEY = 'name_gender_history';
+const HISTORY_MAX = 10;
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveHistory(list) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch (e) {}
+}
+
+function addHistory(name, p) {
+  const list = loadHistory().filter(function (it) { return it.name !== name; });
+  list.unshift({ name: name, p: p });
+  saveHistory(list.slice(0, HISTORY_MAX));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = loadHistory();
+  const box = document.getElementById('history');
+  const wrap = document.getElementById('historyList');
+  if (!list.length) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = 'block';
+  wrap.textContent = '';
+  list.forEach(function (it) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.textContent = it.name + ' · ' + (it.p >= 0.5 ? '男' : '女');
+    chip.addEventListener('click', function () {
+      inputEl.value = it.name;
+      render();
+    });
+    wrap.appendChild(chip);
+  });
+}
+
+renderHistory();
 
 goEl.addEventListener('click', render);
 inputEl.addEventListener('keydown', function (e) {

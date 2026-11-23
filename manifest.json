@@ -1,0 +1,13 @@
+{
+  "name": "姓名性别判断",
+  "short_name": "姓名判断",
+  "description": "输入中文姓名，小模型判断性别",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#1877f2",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
