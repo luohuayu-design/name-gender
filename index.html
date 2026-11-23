@@ -179,14 +179,14 @@
     <div class="footer">
       237 万参数小模型 · 字向量 128 维 · 位置特征 · 人名词典<br>
       结果仅供参考，中性名字本身就没有固定答案<br>
-      v4.0 · 2026-11-23
+      v4.1 · 2026-11-23
     </div>
   </div>
 
 <script>
 'use strict';
 
-const MODEL_VERSION = '4.0';
+const MODEL_VERSION = '4.1';
 let model = null;
 const charToId = new Map();
 
@@ -413,8 +413,8 @@ function verdictOf(p) {
 
 function confidenceOf(p) {
   const d = Math.abs(p - 0.5) * 2;
-  if (d >= 0.8) return '高';
-  if (d >= 0.5) return '中';
+  if (d >= 0.6) return '高';
+  if (d >= 0.3) return '中';
   return '低';
 }
 

@@ -1,5 +1,6 @@
-const CACHE = 'name-gender-v4.0';
-const ASSETS = ['./', './index.html', './model.json', './manifest.json', './icon.svg'];
+// 注意：升级模型时，这里的 CACHE 和 model.json 的版本号要跟 index.html 的 MODEL_VERSION 一起改
+const CACHE = 'name-gender-v4.1';
+const ASSETS = ['./', './index.html', './model.json?v=4.1', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(
@@ -26,11 +27,15 @@ self.addEventListener('fetch', function (e) {
   const url = new URL(req.url);
   if (url.pathname.indexOf('/name-gender/') === -1) return;
 
-  // 模型：缓存优先（文件名带版本参数，发版会换新缓存）
+  // 模型：按完整 URL（含版本参数）缓存，换版本号就会重新下载
   if (url.pathname.endsWith('model.json')) {
     e.respondWith(
-      caches.match(req, { ignoreSearch: true }).then(function (hit) {
-        return hit || fetch(req);
+      caches.match(req).then(function (hit) {
+        return hit || fetch(req).then(function (res) {
+          const copy = res.clone();
+          caches.open(CACHE).then(function (c) { c.put(req, copy); });
+          return res;
+        });
       })
     );
     return;
