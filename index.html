@@ -152,9 +152,9 @@
     </div>
 
     <div class="footer">
-      39.8 万参数小模型 · 单字+双字特征 · 温度校准 · 测试准确率 98.7%<br>
+      39.8 万参数小模型 · 姓/名/搭配三通道 · 温度校准 · 测试准确率 99.7%<br>
       结果仅供参考，中性名字本身就没有固定答案<br>
-      v2.0 · 2026-11-23
+      v3.0 · 2026-11-23
     </div>
   </div>
 
@@ -184,6 +184,29 @@ fetch('./model.json')
     statusEl.className = 'status err';
   });
 
+// 与 train.js 完全一致的复姓表
+const COMPOUND_SURNAMES = new Set([
+  '欧阳', '太史', '端木', '上官', '司马', '东方', '独孤', '南宫', '万俟', '闻人',
+  '夏侯', '诸葛', '尉迟', '公羊', '赫连', '澹台', '皇甫', '宗政', '濮阳', '公冶',
+  '太叔', '申屠', '公孙', '慕容', '仲孙', '钟离', '长孙', '宇文', '司徒', '鲜于',
+  '司空', '闾丘', '子车', '亓官', '司寇', '巫马', '公西', '颛孙', '壤驷', '公良',
+  '漆雕', '乐正', '宰父', '谷梁', '拓跋', '夹谷', '轩辕', '令狐', '段干', '百里',
+  '呼延', '东郭', '南门', '羊舌', '微生', '公户', '公玉', '公仪', '梁丘', '公仲',
+  '公上', '公门', '公山', '公坚', '左丘', '公伯', '西门', '公祖', '第五', '公乘',
+  '贯丘', '公皙', '南荣', '东里', '东宫', '仲长', '子书', '子桑', '即墨', '达奚',
+  '褚师'
+]);
+
+function splitName(chars) {
+  if (chars.length >= 3 && COMPOUND_SURNAMES.has(chars[0] + chars[1])) {
+    return { surname: chars.slice(0, 2), given: chars.slice(2) };
+  }
+  if (chars.length >= 2) {
+    return { surname: chars.slice(0, 1), given: chars.slice(1) };
+  }
+  return { surname: [], given: chars.slice() };
+}
+
 // 双字特征哈希，必须与 train.js / predict.js 完全一致
 function bigramBucket(c1, c2) {
   const a = c1.charCodeAt(0);
@@ -193,39 +216,87 @@ function bigramBucket(c1, c2) {
   return h % model.buckets;
 }
 
-// 与 predict.js 完全一致的前向计算（单字平均 + 双字桶加权，最后除以温度）
+// 前向：姓 / 名 / 搭配三通道分别平均，再按模型学到的权重加权
 function predict(name) {
-  const known = [], unknown = [];
+  const chars = [];
+  const unknown = [];
   for (const ch of name) {
     if (ch < '\u4e00' || ch > '\u9fa5') continue;
-    if (charToId.has(ch)) known.push(ch);
-    else unknown.push(ch);
+    chars.push(ch);
+    if (!charToId.has(ch)) unknown.push(ch);
   }
-  if (known.length === 0) {
+  if (chars.length === 0) {
+    return { error: '请输入中文姓名', unknown: unknown };
+  }
+
+  const parts = splitName(chars);
+  const surname = parts.surname;
+  const given = parts.given;
+
+  const su = [], sB = [], gu = [], gB = [];
+  for (const ch of surname) if (charToId.has(ch)) su.push(charToId.get(ch));
+  for (let k = 0; k + 1 < surname.length; k++) sB.push(bigramBucket(surname[k], surname[k + 1]));
+  for (const ch of given) if (charToId.has(ch)) gu.push(charToId.get(ch));
+  for (let k = 0; k + 1 < given.length; k++) gB.push(bigramBucket(given[k], given[k + 1]));
+
+  let cross = -1;
+  if (surname.length && given.length) {
+    cross = bigramBucket(surname[surname.length - 1], given[0]);
+  }
+
+  if (su.length + gu.length === 0) {
     return { error: '名字里的字模型都不认识', unknown: unknown };
   }
+
   const H = model.hidden;
   const V = model.vocab.length;
-  const x = new Float64Array(H);
-  for (const ch of known) {
-    const base = charToId.get(ch) * H;
-    for (let j = 0; j < H; j++) x[j] += model.W1[base + j];
+  const xs = new Float64Array(H);
+  const xg = new Float64Array(H);
+  const xc = new Float64Array(H);
+
+  for (const id of su) {
+    const base = id * H;
+    for (let j = 0; j < H; j++) xs[j] += model.W1[base + j];
   }
-  const invU = 1 / known.length;
-  for (let j = 0; j < H; j++) x[j] *= invU;
-  const nb = known.length - 1;
-  if (nb > 0) {
-    const invB = 0.5 / nb;
-    for (let k = 0; k < nb; k++) {
-      const base = (V + bigramBucket(known[k], known[k + 1])) * H;
-      for (let j = 0; j < H; j++) x[j] += model.W1[base + j] * invB;
-    }
+  for (const bk of sB) {
+    const base = (V + bk) * H;
+    for (let j = 0; j < H; j++) xs[j] += model.W1[base + j];
   }
+  const ns = su.length + sB.length;
+  if (ns) { const k = 1 / ns; for (let j = 0; j < H; j++) xs[j] *= k; }
+
+  for (const id of gu) {
+    const base = id * H;
+    for (let j = 0; j < H; j++) xg[j] += model.W1[base + j];
+  }
+  for (const bk of gB) {
+    const base = (V + bk) * H;
+    for (let j = 0; j < H; j++) xg[j] += model.W1[base + j];
+  }
+  const ng = gu.length + gB.length;
+  if (ng) { const k = 1 / ng; for (let j = 0; j < H; j++) xg[j] *= k; }
+
+  if (cross >= 0) {
+    const base = (V + cross) * H;
+    for (let j = 0; j < H; j++) xc[j] = model.W1[base + j];
+  }
+
   let z = model.B2;
-  for (let j = 0; j < H; j++) z += model.W2[j] * Math.tanh(x[j] + model.B1[j]);
+  for (let j = 0; j < H; j++) {
+    z += model.W2[j] * Math.tanh(
+      model.alpha * xs[j] + model.beta * xg[j] + model.gamma * xc[j] + model.B1[j]
+    );
+  }
   const T = model.temperature || 1;
   const p = 1 / (1 + Math.exp(-z / T));
-  return { p: p, known: known, unknown: unknown };
+
+  return {
+    p: p,
+    known: chars.filter(function (ch) { return charToId.has(ch); }),
+    unknown: unknown,
+    surname: surname.join(''),
+    given: given.join('')
+  };
 }
 
 function confidenceOf(p) {
@@ -277,6 +348,7 @@ function render() {
   const b = document.createElement('b');
   b.textContent = '置信度：' + conf;
   meta.appendChild(b);
+  meta.appendChild(document.createTextNode('　姓「' + (r.surname || '未识别') + '」名「' + (r.given || '—') + '」'));
   meta.appendChild(document.createTextNode('　识别到的字：' + r.known.join('、')));
 
   const warn = document.getElementById('warn');
