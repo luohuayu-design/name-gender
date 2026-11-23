@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1877f2">
+<title>姓名性别判断</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: linear-gradient(165deg, #e8f0fe 0%, #f0f2f5 45%, #f7f8fa 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #1c1e21;
+    display: flex;
+    justify-content: center;
+    padding: 28px 16px 48px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .page { width: 100%; max-width: 460px; }
+
+  h1 {
+    margin: 0;
+    font-size: 26px;
+    letter-spacing: 1px;
+  }
+  .sub {
+    margin: 6px 0 0;
+    color: #8a8d91;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 18px;
+    padding: 20px;
+    margin-top: 18px;
+    box-shadow: 0 6px 24px rgba(24, 119, 242, 0.10);
+  }
+
+  .input-row { display: flex; gap: 10px; }
+  #name {
+    flex: 1;
+    min-width: 0;
+    height: 50px;
+    padding: 0 16px;
+    font-size: 18px;
+    border: 1.5px solid #e4e6eb;
+    border-radius: 12px;
+    outline: none;
+    background: #f7f8fa;
+    transition: border-color .2s, background .2s;
+  }
+  #name:focus { border-color: #1877f2; background: #fff; }
+  #go {
+    flex: 0 0 auto;
+    height: 50px;
+    padding: 0 22px;
+    font-size: 17px;
+    font-weight: 600;
+    color: #fff;
+    border: 0;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #4a9bff, #1877f2);
+    cursor: pointer;
+    transition: transform .1s, opacity .2s;
+  }
+  #go:active { transform: scale(0.96); }
+  #go:disabled { opacity: .45; cursor: default; }
+
+  .status { margin-top: 14px; font-size: 14px; color: #8a8d91; min-height: 20px; }
+  .status.err { color: #e5484d; }
+  .status.ok { color: #1a9c5b; }
+
+  .result { margin-top: 18px; display: none; }
+  .result.show { display: block; animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .gender {
+    font-size: 46px;
+    font-weight: 800;
+    letter-spacing: 6px;
+    text-align: center;
+    line-height: 1.2;
+  }
+  .gender.male { color: #1877f2; }
+  .gender.female { color: #ff5c8a; }
+  .gender.unknown { color: #8a8d91; font-size: 28px; letter-spacing: 2px; }
+
+  .prob-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 16px;
+    font-size: 13px;
+    color: #65676b;
+  }
+  .bar {
+    display: flex;
+    height: 12px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: #e4e6eb;
+    margin: 8px 0 4px;
+  }
+  .bar i { display: block; height: 100%; transition: width .45s ease; }
+  .bar .m { background: linear-gradient(90deg, #6aa9ff, #1877f2); }
+  .bar .f { background: linear-gradient(90deg, #ffa7c1, #ff5c8a); }
+
+  .meta { margin-top: 14px; font-size: 13px; color: #65676b; line-height: 1.7; }
+  .meta b { color: #1c1e21; font-weight: 600; }
+  .warn { margin-top: 10px; font-size: 13px; color: #b26a00; background: #fff8e1; border-radius: 8px; padding: 8px 12px; }
+  .warn:empty { display: none; }
+
+  .footer {
+    margin-top: 22px;
+    font-size: 12px;
+    color: #a1a5aa;
+    text-align: center;
+    line-height: 1.8;
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <h1>姓名性别判断</h1>
+    <p class="sub">输入中文姓名，小模型给出性别判断和概率。</p>
+
+    <div class="card">
+      <div class="input-row">
+        <input id="name" type="text" maxlength="10" autocomplete="off"
+               enterkeyhint="search" placeholder="例如：张伟">
+        <button id="go" disabled>判断</button>
+      </div>
+
+      <div id="status" class="status">正在加载模型 ...</div>
+
+      <div id="result" class="result">
+        <div id="gender" class="gender unknown">--</div>
+        <div class="prob-labels">
+          <span id="maleLabel">男性 --</span>
+          <span id="femaleLabel">女性 --</span>
+        </div>
+        <div class="bar">
+          <i id="maleBar" class="m" style="width:0%"></i>
+          <i id="femaleBar" class="f" style="width:100%"></i>
+        </div>
+        <div id="meta" class="meta"></div>
+        <div id="warn" class="warn"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      6.7 万参数字符小模型 · 105 万条姓名训练 · 测试准确率约 98%<br>
+      结果仅供参考，中性名字本身就没有固定答案
+    </div>
+  </div>
+
+<script>
+'use strict';
+
+let model = null;
+const charToId = new Map();
+
+const inputEl = document.getElementById('name');
+const goEl = document.getElementById('go');
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+
+// 加载模型
+fetch('./model.json')
+  .then(function (r) { return r.json(); })
+  .then(function (m) {
+    model = m;
+    m.vocab.forEach(function (ch, i) { charToId.set(ch, i); });
+    statusEl.textContent = '模型已就绪，输入名字试试';
+    statusEl.className = 'status ok';
+    goEl.disabled = false;
+  })
+  .catch(function () {
+    statusEl.textContent = '模型加载失败，请刷新页面重试';
+    statusEl.className = 'status err';
+  });
+
+// 与 predict.js 完全一致的前向计算
+function predict(name) {
+  const ids = [], known = [], unknown = [];
+  for (const ch of name) {
+    if (ch < '\u4e00' || ch > '\u9fa5') continue;
+    const id = charToId.get(ch);
+    if (id === undefined) unknown.push(ch);
+    else { ids.push(id); known.push(ch); }
+  }
+  if (ids.length === 0) {
+    return { error: '名字里的字模型都不认识', unknown: unknown };
+  }
+  const H = model.hidden;
+  const x = new Float64Array(H);
+  for (const id of ids) {
+    const base = id * H;
+    for (let j = 0; j < H; j++) x[j] += model.W1[base + j];
+  }
+  const inv = 1 / ids.length;
+  let z = model.B2;
+  for (let j = 0; j < H; j++) {
+    z += model.W2[j] * Math.tanh(x[j] * inv + model.B1[j]);
+  }
+  return { p: 1 / (1 + Math.exp(-z)), known: known, unknown: unknown };
+}
+
+function confidenceOf(p) {
+  const d = Math.abs(p - 0.5) * 2;
+  if (d >= 0.8) return '高';
+  if (d >= 0.5) return '中';
+  return '低';
+}
+
+function showError(msg) {
+  resultEl.classList.remove('show');
+  statusEl.textContent = msg;
+  statusEl.className = 'status err';
+}
+
+function render() {
+  const name = inputEl.value.trim();
+  if (!name) {
+    showError('请先输入姓名');
+    return;
+  }
+
+  const r = predict(name);
+  if (r.error) {
+    const extra = r.unknown && r.unknown.length ? '（不认识的字：' + r.unknown.join('、') + '）' : '';
+    showError(r.error + extra);
+    return;
+  }
+
+  statusEl.textContent = '';
+  statusEl.className = 'status';
+
+  const pMale = Math.min(99.9, Math.max(0.1, r.p * 100));
+  const pFemale = 100 - pMale;
+  const isMale = r.p >= 0.5;
+  const conf = confidenceOf(r.p);
+
+  const genderEl = document.getElementById('gender');
+  genderEl.textContent = isMale ? '男' : '女';
+  genderEl.className = 'gender ' + (isMale ? 'male' : 'female');
+
+  document.getElementById('maleLabel').textContent = '男性 ' + pMale.toFixed(1) + '%';
+  document.getElementById('femaleLabel').textContent = '女性 ' + pFemale.toFixed(1) + '%';
+  document.getElementById('maleBar').style.width = pMale + '%';
+  document.getElementById('femaleBar').style.width = pFemale + '%';
+
+  const meta = document.getElementById('meta');
+  meta.textContent = '';
+  const b = document.createElement('b');
+  b.textContent = '置信度：' + conf;
+  meta.appendChild(b);
+  meta.appendChild(document.createTextNode('　识别到的字：' + r.known.join('、')));
+
+  const warn = document.getElementById('warn');
+  warn.textContent = r.unknown.length ? '模型不认识、已忽略：' + r.unknown.join('、') : '';
+
+  resultEl.classList.add('show');
+}
+
+goEl.addEventListener('click', render);
+inputEl.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') render();
+});
+</script>
+</body>
+</html>
