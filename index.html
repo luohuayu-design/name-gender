@@ -91,6 +91,7 @@
   }
   .gender.male { color: #1877f2; }
   .gender.female { color: #ff5c8a; }
+  .gender.neutral { color: #8a8d91; font-size: 34px; letter-spacing: 4px; }
   .gender.unknown { color: #8a8d91; font-size: 28px; letter-spacing: 2px; }
 
   .prob-labels {
@@ -176,16 +177,16 @@
     </div>
 
     <div class="footer">
-      40.0 万参数小模型 · 姓/名/搭配三通道 · 测试准确率 99.7%<br>
+      237 万参数小模型 · 字向量 128 维 · 位置特征 · 人名词典<br>
       结果仅供参考，中性名字本身就没有固定答案<br>
-      v3.1 · 2026-11-23
+      v4.0 · 2026-11-23
     </div>
   </div>
 
 <script>
 'use strict';
 
-const MODEL_VERSION = '3.1';
+const MODEL_VERSION = '4.0';
 let model = null;
 const charToId = new Map();
 
@@ -232,6 +233,18 @@ loadModel()
   .then(function (m) {
     model = m;
     m.vocab.forEach(function (ch, i) { charToId.set(ch, i); });
+    // int8 权重还原成浮点（体积小、加载快）
+    const V = m.vocab.length, H = m.hidden, NB = m.buckets;
+    m._models = m.models.map(function (mm) {
+      const bin = atob(mm.w1);
+      const W1 = new Float32Array((V + NB) * H);
+      for (let i = 0; i < W1.length; i++) {
+        let v = bin.charCodeAt(i);
+        if (v > 127) v -= 256;
+        W1[i] = v * mm.scale;
+      }
+      return { alpha: mm.alpha, beta: mm.beta, gamma: mm.gamma, B1: mm.B1, W2: mm.W2, B2: mm.B2, W1: W1 };
+    });
     statusEl.textContent = '模型已就绪，输入名字试试';
     statusEl.className = 'status ok';
     goEl.disabled = false;
@@ -278,6 +291,9 @@ function bigramBucket(c1, c2) {
   return h % model.buckets;
 }
 
+// 位置标记（与 train.js 一致）
+const POS_TAGS = [0, 1, 2].map(function (k) { return String.fromCharCode(0xe000 + k); });
+
 // 前向：姓 / 名 / 搭配三通道分别平均，再按模型学到的权重加权
 function predict(name) {
   const chars = [];
@@ -294,12 +310,41 @@ function predict(name) {
   const parts = splitName(chars);
   const surname = parts.surname;
   const given = parts.given;
+  const known = chars.filter(function (ch) { return charToId.has(ch); });
+  const base = {
+    known: known,
+    unknown: unknown,
+    surname: surname.join(''),
+    given: given.join(''),
+  };
+
+  // 人名词典优先
+  const key = chars.join('');
+  if (Object.prototype.hasOwnProperty.call(model.dict || {}, key)) {
+    const isMale = model.dict[key] === 1;
+    return Object.assign({ p: isMale ? 0.95 : 0.05, source: '词典' }, base);
+  }
 
   const su = [], sB = [], gu = [], gB = [];
   for (const ch of surname) if (charToId.has(ch)) su.push(charToId.get(ch));
   for (let k = 0; k + 1 < surname.length; k++) sB.push(bigramBucket(surname[k], surname[k + 1]));
   for (const ch of given) if (charToId.has(ch)) gu.push(charToId.get(ch));
   for (let k = 0; k + 1 < given.length; k++) gB.push(bigramBucket(given[k], given[k + 1]));
+
+  // 位置特征：名里的字带上「首 / 中 / 尾」标记
+  const L = given.length;
+  for (let k = 0; k < L; k++) {
+    if (L === 1) {
+      gB.push(bigramBucket(given[k], POS_TAGS[0]));
+      gB.push(bigramBucket(given[k], POS_TAGS[2]));
+    } else if (k === 0) {
+      gB.push(bigramBucket(given[k], POS_TAGS[0]));
+    } else if (k === L - 1) {
+      gB.push(bigramBucket(given[k], POS_TAGS[2]));
+    } else {
+      gB.push(bigramBucket(given[k], POS_TAGS[1]));
+    }
+  }
 
   let cross = -1;
   if (surname.length && given.length) {
@@ -312,53 +357,58 @@ function predict(name) {
 
   const H = model.hidden;
   const V = model.vocab.length;
+  const T = model.temperature || 1;
   const xs = new Float64Array(H);
   const xg = new Float64Array(H);
   const xc = new Float64Array(H);
 
-  for (const id of su) {
-    const base = id * H;
-    for (let j = 0; j < H; j++) xs[j] += model.W1[base + j];
-  }
-  for (const bk of sB) {
-    const base = (V + bk) * H;
-    for (let j = 0; j < H; j++) xs[j] += model.W1[base + j];
-  }
-  const ns = su.length + sB.length;
-  if (ns) { const k = 1 / ns; for (let j = 0; j < H; j++) xs[j] *= k; }
+  // 多模型概率平均
+  let sum = 0;
+  const models = model._models || [];
+  for (const M of models) {
+    xs.fill(0); xg.fill(0); xc.fill(0);
 
-  for (const id of gu) {
-    const base = id * H;
-    for (let j = 0; j < H; j++) xg[j] += model.W1[base + j];
-  }
-  for (const bk of gB) {
-    const base = (V + bk) * H;
-    for (let j = 0; j < H; j++) xg[j] += model.W1[base + j];
-  }
-  const ng = gu.length + gB.length;
-  if (ng) { const k = 1 / ng; for (let j = 0; j < H; j++) xg[j] *= k; }
+    for (const id of su) {
+      const b = id * H;
+      for (let j = 0; j < H; j++) xs[j] += M.W1[b + j];
+    }
+    for (const bk of sB) {
+      const b = (V + bk) * H;
+      for (let j = 0; j < H; j++) xs[j] += M.W1[b + j];
+    }
+    const ns = su.length + sB.length;
+    if (ns) { const k = 1 / ns; for (let j = 0; j < H; j++) xs[j] *= k; }
 
-  if (cross >= 0) {
-    const base = (V + cross) * H;
-    for (let j = 0; j < H; j++) xc[j] = model.W1[base + j];
+    for (const id of gu) {
+      const b = id * H;
+      for (let j = 0; j < H; j++) xg[j] += M.W1[b + j];
+    }
+    for (const bk of gB) {
+      const b = (V + bk) * H;
+      for (let j = 0; j < H; j++) xg[j] += M.W1[b + j];
+    }
+    const ng = gu.length + gB.length;
+    if (ng) { const k = 1 / ng; for (let j = 0; j < H; j++) xg[j] *= k; }
+
+    if (cross >= 0) {
+      const b = (V + cross) * H;
+      for (let j = 0; j < H; j++) xc[j] = M.W1[b + j];
+    }
+
+    let z = M.B2;
+    for (let j = 0; j < H; j++) {
+      z += M.W2[j] * Math.tanh(M.alpha * xs[j] + M.beta * xg[j] + M.gamma * xc[j] + M.B1[j]);
+    }
+    sum += 1 / (1 + Math.exp(-z / T));
   }
 
-  let z = model.B2;
-  for (let j = 0; j < H; j++) {
-    z += model.W2[j] * Math.tanh(
-      model.alpha * xs[j] + model.beta * xg[j] + model.gamma * xc[j] + model.B1[j]
-    );
-  }
-  const T = model.temperature || 1;
-  const p = 1 / (1 + Math.exp(-z / T));
+  return Object.assign({ p: sum / models.length, source: '模型' }, base);
+}
 
-  return {
-    p: p,
-    known: chars.filter(function (ch) { return charToId.has(ch); }),
-    unknown: unknown,
-    surname: surname.join(''),
-    given: given.join('')
-  };
+// 三分类：概率接近 0.5 时不给强结论
+function verdictOf(p) {
+  if (Math.abs(p - 0.5) < (model.neutral || 0.2)) return '中性';
+  return p >= 0.5 ? '男' : '女';
 }
 
 function confidenceOf(p) {
@@ -393,12 +443,12 @@ function render() {
 
   const pMale = Math.min(99.9, Math.max(0.1, r.p * 100));
   const pFemale = 100 - pMale;
-  const isMale = r.p >= 0.5;
+  const verdict = verdictOf(r.p);
   const conf = confidenceOf(r.p);
 
   const genderEl = document.getElementById('gender');
-  genderEl.textContent = isMale ? '男' : '女';
-  genderEl.className = 'gender ' + (isMale ? 'male' : 'female');
+  genderEl.textContent = verdict === '中性' ? '中性' : verdict;
+  genderEl.className = 'gender ' + (verdict === '中性' ? 'neutral' : (verdict === '男' ? 'male' : 'female'));
 
   document.getElementById('maleLabel').textContent = '男性 ' + pMale.toFixed(1) + '%';
   document.getElementById('femaleLabel').textContent = '女性 ' + pFemale.toFixed(1) + '%';
@@ -410,14 +460,21 @@ function render() {
   const b = document.createElement('b');
   b.textContent = '置信度：' + conf;
   meta.appendChild(b);
+  meta.appendChild(document.createTextNode('　来源：' + r.source));
   meta.appendChild(document.createTextNode('　姓「' + (r.surname || '未识别') + '」名「' + (r.given || '—') + '」'));
   meta.appendChild(document.createTextNode('　识别到的字：' + r.known.join('、')));
 
   const warn = document.getElementById('warn');
-  warn.textContent = r.unknown.length ? '模型不认识、已忽略：' + r.unknown.join('、') : '';
+  if (r.unknown.length) {
+    warn.textContent = '模型不认识、已忽略：' + r.unknown.join('、');
+  } else if (verdict === '中性') {
+    warn.textContent = '这个名字男女都常见，模型不给强结论。';
+  } else {
+    warn.textContent = '';
+  }
 
   resultEl.classList.add('show');
-  addHistory(name, r.p);
+  addHistory(name, verdict);
 }
 
 // ── 最近查询（只存在本机浏览器，不上传） ──
@@ -437,9 +494,9 @@ function saveHistory(list) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch (e) {}
 }
 
-function addHistory(name, p) {
+function addHistory(name, verdict) {
   const list = loadHistory().filter(function (it) { return it.name !== name; });
-  list.unshift({ name: name, p: p });
+  list.unshift({ name: name, v: verdict });
   saveHistory(list.slice(0, HISTORY_MAX));
   renderHistory();
 }
@@ -458,7 +515,7 @@ function renderHistory() {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chip';
-    chip.textContent = it.name + ' · ' + (it.p >= 0.5 ? '男' : '女');
+    chip.textContent = it.name + ' · ' + (it.v || (it.p >= 0.5 ? '男' : '女'));
     chip.addEventListener('click', function () {
       inputEl.value = it.name;
       render();

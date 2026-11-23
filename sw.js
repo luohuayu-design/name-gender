@@ -1,4 +1,4 @@
-const CACHE = 'name-gender-v3.1';
+const CACHE = 'name-gender-v4.0';
 const ASSETS = ['./', './index.html', './model.json', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', function (e) {
