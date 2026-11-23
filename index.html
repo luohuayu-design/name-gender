@@ -49,12 +49,18 @@
     flex: 1;
     min-width: 0;
     height: 50px;
-    padding: 0 16px;
+    min-height: 50px;
+    max-height: 140px;
+    padding: 12px 16px;
     font-size: 18px;
+    line-height: 24px;
+    font-family: inherit;
     border: 1.5px solid #e4e6eb;
     border-radius: 12px;
     outline: none;
     background: #f7f8fa;
+    resize: none;
+    overflow-y: auto;
     transition: border-color .2s, background .2s;
   }
   #name:focus { border-color: #1877f2; background: #fff; }
@@ -133,6 +139,65 @@
   }
   .chip:active { transform: scale(0.96); }
 
+  /* 字符贡献 */
+  .contrib { margin-top: 14px; display: none; }
+  .contrib.show { display: block; }
+  .contrib-title { font-size: 13px; color: #65676b; margin-bottom: 6px; }
+  .ct-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; }
+  .ct-ch { flex: 0 0 auto; width: 20px; text-align: center; font-weight: 600; font-size: 15px; }
+  .ct-track { position: relative; flex: 1; height: 10px; background: #eef0f3; border-radius: 999px; overflow: hidden; }
+  .ct-track::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #cfd3d8; }
+  .ct-fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; }
+  .ct-fill.m { background: linear-gradient(90deg, #6aa9ff, #1877f2); }
+  .ct-fill.f { background: linear-gradient(90deg, #ffa7c1, #ff5c8a); }
+  .ct-val { flex: 0 0 auto; width: 52px; text-align: right; color: #65676b; font-variant-numeric: tabular-nums; }
+
+  /* 批量结果 */
+  .batch { margin-top: 18px; display: none; }
+  .batch.show { display: block; }
+  .batch-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .batch-summary { font-size: 13px; color: #65676b; line-height: 1.5; }
+  #csvBtn {
+    flex: 0 0 auto;
+    border: 1px solid #cfe0ff;
+    background: #eef3ff;
+    color: #1877f2;
+    font-size: 13px;
+    font-family: inherit;
+    padding: 7px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  #csvBtn:active { transform: scale(0.96); }
+  .batch-list { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; }
+  .brow {
+    display: grid;
+    grid-template-columns: 1fr auto 78px 30px;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    border: 0;
+    background: #f7f8fa;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    color: #1c1e21;
+    text-align: left;
+    cursor: pointer;
+  }
+  .brow:active { transform: scale(0.99); }
+  .brow:disabled { cursor: default; opacity: .75; }
+  .bname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btag { font-size: 12px; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+  .btag.male { background: #e7f0ff; color: #1877f2; }
+  .btag.female { background: #ffe9f0; color: #ff5c8a; }
+  .btag.neutral { background: #eceef1; color: #8a8d91; }
+  .btag.err { background: #fdecec; color: #e5484d; }
+  .bprob { font-size: 13px; color: #65676b; text-align: right; font-variant-numeric: tabular-nums; }
+  .bconf { font-size: 12px; color: #a1a5aa; text-align: right; }
+  .bdetail { padding: 0 12px 6px; }
+
   .footer {
     margin-top: 22px;
     font-size: 12px;
@@ -145,12 +210,13 @@
 <body>
   <div class="page">
     <h1>姓名性别判断</h1>
-    <p class="sub">输入中文姓名，小模型给出性别判断和概率。</p>
+    <p class="sub">输入中文姓名，小模型给出性别判断和概率；也可以一次粘贴多个名字。</p>
 
     <div class="card">
       <div class="input-row">
-        <input id="name" type="text" maxlength="10" autocomplete="off"
-               enterkeyhint="search" placeholder="例如：张伟">
+        <textarea id="name" rows="1" maxlength="2000" autocomplete="off"
+                  enterkeyhint="search"
+                  placeholder="例如：张伟，可粘贴多个名字（逗号 / 空格 / 换行分隔）"></textarea>
         <button id="go" disabled>判断</button>
       </div>
 
@@ -168,6 +234,15 @@
         </div>
         <div id="meta" class="meta"></div>
         <div id="warn" class="warn"></div>
+        <div id="contrib" class="contrib"></div>
+      </div>
+
+      <div id="batch" class="batch">
+        <div class="batch-head">
+          <div id="batchSummary" class="batch-summary"></div>
+          <button id="csvBtn" type="button">导出 CSV</button>
+        </div>
+        <div id="batchList" class="batch-list"></div>
       </div>
     </div>
 
@@ -178,8 +253,9 @@
 
     <div class="footer">
       3 模型集成 · 每个 237 万参数 · 字向量 128 维 · 位置特征 · 人名词典<br>
+      支持批量判断、CSV 导出与字符贡献分析<br>
       结果仅供参考，中性名字本身就没有固定答案<br>
-      v4.2 · 2026-11-23
+      v4.3 · 2026-11-23
     </div>
   </div>
 
@@ -245,7 +321,7 @@ loadModel()
       }
       return { alpha: mm.alpha, beta: mm.beta, gamma: mm.gamma, B1: mm.B1, W2: mm.W2, B2: mm.B2, W1: W1 };
     });
-    statusEl.textContent = '模型已就绪，输入名字试试';
+    statusEl.textContent = '模型已就绪，输入或粘贴名字试试';
     statusEl.className = 'status ok';
     goEl.disabled = false;
   })
@@ -294,37 +370,11 @@ function bigramBucket(c1, c2) {
 // 位置标记（与 train.js 一致）
 const POS_TAGS = [0, 1, 2].map(function (k) { return String.fromCharCode(0xe000 + k); });
 
-// 前向：姓 / 名 / 搭配三通道分别平均，再按模型学到的权重加权
-function predict(name) {
-  const chars = [];
-  const unknown = [];
-  for (const ch of name) {
-    if (ch < '\u4e00' || ch > '\u9fa5') continue;
-    chars.push(ch);
-    if (!charToId.has(ch)) unknown.push(ch);
-  }
-  if (chars.length === 0) {
-    return { error: '请输入中文姓名', unknown: unknown };
-  }
-
+// 把姓名拆成三通道特征：姓 / 名（含位置）/ 跨界的搭配
+function featurize(chars) {
   const parts = splitName(chars);
   const surname = parts.surname;
   const given = parts.given;
-  const known = chars.filter(function (ch) { return charToId.has(ch); });
-  const base = {
-    known: known,
-    unknown: unknown,
-    surname: surname.join(''),
-    given: given.join(''),
-  };
-
-  // 人名词典优先
-  const key = chars.join('');
-  if (Object.prototype.hasOwnProperty.call(model.dict || {}, key)) {
-    const isMale = model.dict[key] === 1;
-    return Object.assign({ p: isMale ? 0.95 : 0.05, source: '词典' }, base);
-  }
-
   const su = [], sB = [], gu = [], gB = [];
   for (const ch of surname) if (charToId.has(ch)) su.push(charToId.get(ch));
   for (let k = 0; k + 1 < surname.length; k++) sB.push(bigramBucket(surname[k], surname[k + 1]));
@@ -351,58 +401,158 @@ function predict(name) {
     cross = bigramBucket(surname[surname.length - 1], given[0]);
   }
 
-  if (su.length + gu.length === 0) {
-    return { error: '名字里的字模型都不认识', unknown: unknown };
+  if (su.length + gu.length === 0) return null;
+  return { su: su, sB: sB, gu: gu, gB: gB, cross: cross };
+}
+
+// 单个模型的前向，返回未除以温度的 logit
+function forwardZ(M, f, V, H, xs, xg, xc) {
+  xs.fill(0); xg.fill(0); xc.fill(0);
+
+  for (const id of f.su) {
+    const b = id * H;
+    for (let j = 0; j < H; j++) xs[j] += M.W1[b + j];
+  }
+  for (const bk of f.sB) {
+    const b = (V + bk) * H;
+    for (let j = 0; j < H; j++) xs[j] += M.W1[b + j];
+  }
+  const ns = f.su.length + f.sB.length;
+  if (ns) { const k = 1 / ns; for (let j = 0; j < H; j++) xs[j] *= k; }
+
+  for (const id of f.gu) {
+    const b = id * H;
+    for (let j = 0; j < H; j++) xg[j] += M.W1[b + j];
+  }
+  for (const bk of f.gB) {
+    const b = (V + bk) * H;
+    for (let j = 0; j < H; j++) xg[j] += M.W1[b + j];
+  }
+  const ng = f.gu.length + f.gB.length;
+  if (ng) { const k = 1 / ng; for (let j = 0; j < H; j++) xg[j] *= k; }
+
+  if (f.cross >= 0) {
+    const b = (V + f.cross) * H;
+    for (let j = 0; j < H; j++) xc[j] = M.W1[b + j];
   }
 
+  let z = M.B2;
+  for (let j = 0; j < H; j++) {
+    z += M.W2[j] * Math.tanh(M.alpha * xs[j] + M.beta * xg[j] + M.gamma * xc[j] + M.B1[j]);
+  }
+  return z;
+}
+
+// 多模型：概率取平均；logit 也取平均，供字符贡献使用
+function scoreOf(chars) {
+  const f = featurize(chars);
+  if (!f) return null;
   const H = model.hidden;
   const V = model.vocab.length;
   const T = model.temperature || 1;
   const xs = new Float64Array(H);
   const xg = new Float64Array(H);
   const xc = new Float64Array(H);
-
-  // 多模型概率平均
-  let sum = 0;
   const models = model._models || [];
+  let sz = 0, sp = 0;
   for (const M of models) {
-    xs.fill(0); xg.fill(0); xc.fill(0);
+    const z = forwardZ(M, f, V, H, xs, xg, xc);
+    sz += z;
+    sp += 1 / (1 + Math.exp(-z / T));
+  }
+  const k = models.length || 1;
+  return { z: sz / k, p: sp / k };
+}
 
-    for (const id of su) {
-      const b = id * H;
-      for (let j = 0; j < H; j++) xs[j] += M.W1[b + j];
-    }
-    for (const bk of sB) {
-      const b = (V + bk) * H;
-      for (let j = 0; j < H; j++) xs[j] += M.W1[b + j];
-    }
-    const ns = su.length + sB.length;
-    if (ns) { const k = 1 / ns; for (let j = 0; j < H; j++) xs[j] *= k; }
-
-    for (const id of gu) {
-      const b = id * H;
-      for (let j = 0; j < H; j++) xg[j] += M.W1[b + j];
-    }
-    for (const bk of gB) {
-      const b = (V + bk) * H;
-      for (let j = 0; j < H; j++) xg[j] += M.W1[b + j];
-    }
-    const ng = gu.length + gB.length;
-    if (ng) { const k = 1 / ng; for (let j = 0; j < H; j++) xg[j] *= k; }
-
-    if (cross >= 0) {
-      const b = (V + cross) * H;
-      for (let j = 0; j < H; j++) xc[j] = M.W1[b + j];
-    }
-
-    let z = M.B2;
-    for (let j = 0; j < H; j++) {
-      z += M.W2[j] * Math.tanh(M.alpha * xs[j] + M.beta * xg[j] + M.gamma * xc[j] + M.B1[j]);
-    }
-    sum += 1 / (1 + Math.exp(-z / T));
+function predict(name) {
+  const chars = [];
+  const unknown = [];
+  for (const ch of name) {
+    if (ch < '\u4e00' || ch > '\u9fa5') continue;
+    chars.push(ch);
+    if (!charToId.has(ch)) unknown.push(ch);
+  }
+  if (chars.length === 0) {
+    return { error: '请输入中文姓名', unknown: unknown };
   }
 
-  return Object.assign({ p: sum / models.length, source: '模型' }, base);
+  const parts = splitName(chars);
+  const base = {
+    chars: chars,
+    known: chars.filter(function (ch) { return charToId.has(ch); }),
+    unknown: unknown,
+    surname: parts.surname.join(''),
+    given: parts.given.join(''),
+  };
+
+  // 人名词典优先
+  const key = chars.join('');
+  if (Object.prototype.hasOwnProperty.call(model.dict || {}, key)) {
+    const isMale = model.dict[key] === 1;
+    return Object.assign({ p: isMale ? 0.95 : 0.05, source: '词典', dict: true }, base);
+  }
+
+  const s = scoreOf(chars);
+  if (!s) return Object.assign({ error: '名字里的字模型都不认识' }, base);
+  return Object.assign({ p: s.p, z: s.z, source: '模型' }, base);
+}
+
+// 字符贡献：去掉某个字后，男性概率变化了多少个百分点（正 = 偏男）
+function contributionsOf(chars) {
+  const full = scoreOf(chars);
+  if (!full) return [];
+  const out = [];
+  for (let i = 0; i < chars.length; i++) {
+    const rest = chars.slice(0, i).concat(chars.slice(i + 1));
+    const s = rest.length ? scoreOf(rest) : null;
+    const pRest = s ? s.p : 0.5;
+    out.push({ ch: chars[i], dp: (full.p - pRest) * 100 });
+  }
+  return out;
+}
+
+// 画字符贡献条：向右偏男，向左偏女
+function renderContrib(box, chars) {
+  box.textContent = '';
+  box.classList.remove('show');
+  if (!chars || chars.length < 2) return;
+  const items = contributionsOf(chars);
+  let max = 0;
+  for (const it of items) max = Math.max(max, Math.abs(it.dp));
+  if (!items.length || max < 0.05) return;
+
+  const title = document.createElement('div');
+  title.className = 'contrib-title';
+  title.textContent = '字符贡献（去掉该字后男性概率的变化）';
+  box.appendChild(title);
+
+  for (const it of items) {
+    const row = document.createElement('div');
+    row.className = 'ct-row';
+
+    const ch = document.createElement('span');
+    ch.className = 'ct-ch';
+    ch.textContent = it.ch;
+
+    const track = document.createElement('span');
+    track.className = 'ct-track';
+    const fill = document.createElement('i');
+    fill.className = 'ct-fill ' + (it.dp >= 0 ? 'm' : 'f');
+    fill.style.width = Math.max(2, Math.abs(it.dp) / max * 50) + '%';
+    if (it.dp >= 0) fill.style.left = '50%';
+    else fill.style.right = '50%';
+    track.appendChild(fill);
+
+    const val = document.createElement('span');
+    val.className = 'ct-val';
+    val.textContent = (it.dp >= 0 ? '+' : '') + it.dp.toFixed(1);
+
+    row.appendChild(ch);
+    row.appendChild(track);
+    row.appendChild(val);
+    box.appendChild(row);
+  }
+  box.classList.add('show');
 }
 
 // 三分类：概率接近 0.5 时不给强结论
@@ -418,19 +568,48 @@ function confidenceOf(p) {
   return '低';
 }
 
+const SEP_RE = /[\s,，、;；/|]+/;
+const MAX_BATCH = 300;
+let batchRows = null;
+
+// 从输入框拆出多个名字（逗号 / 空格 / 换行等分隔，自动去重）
+function parseNames(text) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of text.split(SEP_RE)) {
+    const n = raw.trim();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+    if (out.length >= MAX_BATCH) break;
+  }
+  return out;
+}
+
 function showError(msg) {
   resultEl.classList.remove('show');
+  document.getElementById('contrib').classList.remove('show');
+  document.getElementById('batch').classList.remove('show');
   statusEl.textContent = msg;
   statusEl.className = 'status err';
 }
 
 function render() {
-  const name = inputEl.value.trim();
-  if (!name) {
+  const raw = inputEl.value.trim();
+  if (!raw) {
     showError('请先输入姓名');
     return;
   }
+  const names = parseNames(raw);
+  if (!names.length) {
+    showError('请先输入中文姓名');
+    return;
+  }
+  if (names.length === 1) renderSingle(names[0]);
+  else renderBatch(names);
+}
 
+function renderSingle(name) {
   const r = predict(name);
   if (r.error) {
     const extra = r.unknown && r.unknown.length ? '（不认识的字：' + r.unknown.join('、') + '）' : '';
@@ -438,6 +617,7 @@ function render() {
     return;
   }
 
+  document.getElementById('batch').classList.remove('show');
   statusEl.textContent = '';
   statusEl.className = 'status';
 
@@ -473,8 +653,136 @@ function render() {
     warn.textContent = '';
   }
 
+  // 词典命中的结果不画贡献（结果不是模型算出来的）
+  renderContrib(document.getElementById('contrib'), r.dict ? null : r.chars);
+
   resultEl.classList.add('show');
   addHistory(name, verdict);
+}
+
+// 多个名字：列表 + 汇总 + 导出 CSV，点某一行展开字符贡献
+function renderBatch(names) {
+  const results = names.map(function (n) {
+    const r = predict(n);
+    r.name = n;
+    return r;
+  });
+  batchRows = results;
+
+  resultEl.classList.remove('show');
+  document.getElementById('contrib').classList.remove('show');
+
+  let male = 0, female = 0, neutral = 0, failed = 0;
+  for (const r of results) {
+    if (r.error) { failed++; continue; }
+    const v = verdictOf(r.p);
+    if (v === '男') male++;
+    else if (v === '女') female++;
+    else neutral++;
+  }
+
+  document.getElementById('batchSummary').textContent =
+    '共 ' + results.length + ' 个名字 · 男 ' + male + ' · 女 ' + female + ' · 中性 ' + neutral +
+    (failed ? ' · 无法判断 ' + failed : '');
+
+  const list = document.getElementById('batchList');
+  list.textContent = '';
+
+  results.forEach(function (r) {
+    const wrap = document.createElement('div');
+
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'brow';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'bname';
+    nameEl.textContent = r.name;
+
+    const tag = document.createElement('span');
+    const probEl = document.createElement('span');
+    probEl.className = 'bprob';
+    const confEl = document.createElement('span');
+    confEl.className = 'bconf';
+
+    if (r.error) {
+      tag.className = 'btag err';
+      tag.textContent = '无法判断';
+      row.disabled = true;
+    } else {
+      const v = verdictOf(r.p);
+      tag.className = 'btag ' + (v === '男' ? 'male' : (v === '女' ? 'female' : 'neutral'));
+      tag.textContent = v;
+      probEl.textContent = '男 ' + (r.p * 100).toFixed(1) + '%';
+      confEl.textContent = confidenceOf(r.p);
+    }
+
+    row.appendChild(nameEl);
+    row.appendChild(tag);
+    row.appendChild(probEl);
+    row.appendChild(confEl);
+    wrap.appendChild(row);
+
+    // 点一行展开 / 收起字符贡献
+    if (!r.error && !r.dict) {
+      const detail = document.createElement('div');
+      detail.className = 'bdetail contrib';
+      wrap.appendChild(detail);
+      let drawn = false;
+      row.addEventListener('click', function () {
+        if (!drawn) {
+          renderContrib(detail, r.chars);
+          drawn = true;
+          return;
+        }
+        detail.classList.toggle('show');
+      });
+    }
+
+    list.appendChild(wrap);
+  });
+
+  statusEl.textContent = '';
+  statusEl.className = 'status ok';
+  document.getElementById('batch').classList.add('show');
+}
+
+function csvCell(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+// 导出批量结果（带 BOM，Excel 打开不乱码）
+function exportCsv() {
+  if (!batchRows || !batchRows.length) return;
+  const rows = [['姓名', '判定', '男性概率(%)', '女性概率(%)', '置信度', '来源/说明']];
+  for (const r of batchRows) {
+    if (r.error) {
+      rows.push([r.name, '无法判断', '', '', '', r.error]);
+    } else {
+      rows.push([
+        r.name,
+        verdictOf(r.p),
+        (r.p * 100).toFixed(1),
+        ((1 - r.p) * 100).toFixed(1),
+        confidenceOf(r.p),
+        r.source,
+      ]);
+    }
+  }
+  const text = '\uFEFF' + rows.map(function (cols) {
+    return cols.map(csvCell).join(',');
+  }).join('\r\n');
+
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '姓名性别判断结果.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
 }
 
 // ── 最近查询（只存在本机浏览器，不上传） ──
@@ -526,10 +834,23 @@ function renderHistory() {
 
 renderHistory();
 
+// 输入框随内容自动长高（最多 140px）
+function autoGrow() {
+  inputEl.style.height = 'auto';
+  const h = Math.min(140, Math.max(50, inputEl.scrollHeight || 50));
+  inputEl.style.height = h + 'px';
+}
+
 goEl.addEventListener('click', render);
+document.getElementById('csvBtn').addEventListener('click', exportCsv);
 inputEl.addEventListener('keydown', function (e) {
-  if (e.key === 'Enter') render();
+  // Enter 直接判断；Shift + Enter 换行（方便批量粘贴后逐个编辑）
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    render();
+  }
 });
+inputEl.addEventListener('input', autoGrow);
 </script>
 </body>
 </html>
