@@ -152,7 +152,7 @@
     </div>
 
     <div class="footer">
-      6.7 万参数字符小模型 · 105 万条姓名训练 · 测试准确率约 98%<br>
+      39.8 万参数小模型 · 单字+双字特征 · 温度校准 · 测试准确率 98.7%<br>
       结果仅供参考，中性名字本身就没有固定答案
     </div>
   </div>
@@ -183,30 +183,48 @@ fetch('./model.json')
     statusEl.className = 'status err';
   });
 
-// 与 predict.js 完全一致的前向计算
+// 双字特征哈希，必须与 train.js / predict.js 完全一致
+function bigramBucket(c1, c2) {
+  const a = c1.charCodeAt(0);
+  const b = c2.charCodeAt(0);
+  let h = Math.imul(a, 73856093) ^ Math.imul(b, 19349663);
+  h = h >>> 0;
+  return h % model.buckets;
+}
+
+// 与 predict.js 完全一致的前向计算（单字平均 + 双字桶加权，最后除以温度）
 function predict(name) {
-  const ids = [], known = [], unknown = [];
+  const known = [], unknown = [];
   for (const ch of name) {
     if (ch < '\u4e00' || ch > '\u9fa5') continue;
-    const id = charToId.get(ch);
-    if (id === undefined) unknown.push(ch);
-    else { ids.push(id); known.push(ch); }
+    if (charToId.has(ch)) known.push(ch);
+    else unknown.push(ch);
   }
-  if (ids.length === 0) {
+  if (known.length === 0) {
     return { error: '名字里的字模型都不认识', unknown: unknown };
   }
   const H = model.hidden;
+  const V = model.vocab.length;
   const x = new Float64Array(H);
-  for (const id of ids) {
-    const base = id * H;
+  for (const ch of known) {
+    const base = charToId.get(ch) * H;
     for (let j = 0; j < H; j++) x[j] += model.W1[base + j];
   }
-  const inv = 1 / ids.length;
-  let z = model.B2;
-  for (let j = 0; j < H; j++) {
-    z += model.W2[j] * Math.tanh(x[j] * inv + model.B1[j]);
+  const invU = 1 / known.length;
+  for (let j = 0; j < H; j++) x[j] *= invU;
+  const nb = known.length - 1;
+  if (nb > 0) {
+    const invB = 0.5 / nb;
+    for (let k = 0; k < nb; k++) {
+      const base = (V + bigramBucket(known[k], known[k + 1])) * H;
+      for (let j = 0; j < H; j++) x[j] += model.W1[base + j] * invB;
+    }
   }
-  return { p: 1 / (1 + Math.exp(-z)), known: known, unknown: unknown };
+  let z = model.B2;
+  for (let j = 0; j < H; j++) z += model.W2[j] * Math.tanh(x[j] + model.B1[j]);
+  const T = model.temperature || 1;
+  const p = 1 / (1 + Math.exp(-z / T));
+  return { p: p, known: known, unknown: unknown };
 }
 
 function confidenceOf(p) {
