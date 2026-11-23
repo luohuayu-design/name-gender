@@ -143,6 +143,7 @@
   .contrib { margin-top: 14px; display: none; }
   .contrib.show { display: block; }
   .contrib-title { font-size: 13px; color: #65676b; margin-bottom: 6px; }
+  .contrib-note { font-size: 12px; color: #a1a5aa; line-height: 1.6; margin-bottom: 4px; }
   .ct-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; }
   .ct-ch { flex: 0 0 auto; width: 20px; text-align: center; font-weight: 600; font-size: 15px; }
   .ct-track { position: relative; flex: 1; height: 10px; background: #eef0f3; border-radius: 999px; overflow: hidden; }
@@ -255,7 +256,7 @@
       3 模型集成 · 每个 237 万参数 · 字向量 128 维 · 位置特征 · 人名词典<br>
       支持批量判断、CSV 导出与字符贡献分析<br>
       结果仅供参考，中性名字本身就没有固定答案<br>
-      v4.3 · 2026-11-23
+      v4.4 · 2026-11-23
     </div>
   </div>
 
@@ -497,16 +498,38 @@ function predict(name) {
   return Object.assign({ p: s.p, z: s.z, source: '模型' }, base);
 }
 
-// 字符贡献：去掉某个字后，男性概率变化了多少个百分点（正 = 偏男）
+// 字符贡献 = Shapley 值：把所有「去掉部分字」的组合都算一遍，
+// 每个字取它在各种组合里的平均边际影响（单位：百分点），
+// 各字相加 = 最终男性概率 − 50%
 function contributionsOf(chars) {
-  const full = scoreOf(chars);
-  if (!full) return [];
+  const n = chars.length;
+  if (n < 2) return [];
+
+  const cache = new Map();
+  function pOf(mask) {
+    if (cache.has(mask)) return cache.get(mask);
+    const sub = [];
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) sub.push(chars[i]);
+    const s = sub.length ? scoreOf(sub) : null;
+    const p = s ? s.p : 0.5;   // 一个字都不给时按 50% 算
+    cache.set(mask, p);
+    return p;
+  }
+
+  const fact = [1];
+  for (let i = 1; i <= n; i++) fact[i] = fact[i - 1] * i;
+
   const out = [];
-  for (let i = 0; i < chars.length; i++) {
-    const rest = chars.slice(0, i).concat(chars.slice(i + 1));
-    const s = rest.length ? scoreOf(rest) : null;
-    const pRest = s ? s.p : 0.5;
-    out.push({ ch: chars[i], dp: (full.p - pRest) * 100 });
+  for (let i = 0; i < n; i++) {
+    let v = 0;
+    for (let mask = 0; mask < (1 << n); mask++) {
+      if (mask & (1 << i)) continue;
+      let k = 0;
+      for (let m = mask; m; m &= m - 1) k++;   // mask 里有几个字
+      const w = fact[k] * fact[n - k - 1] / fact[n];
+      v += w * (pOf(mask | (1 << i)) - pOf(mask));
+    }
+    out.push({ ch: chars[i], dp: v * 100 });
   }
   return out;
 }
@@ -523,8 +546,13 @@ function renderContrib(box, chars) {
 
   const title = document.createElement('div');
   title.className = 'contrib-title';
-  title.textContent = '字符贡献（去掉该字后男性概率的变化）';
+  title.textContent = '字符贡献（正 = 偏男，负 = 偏女）';
   box.appendChild(title);
+
+  const note = document.createElement('div');
+  note.className = 'contrib-note';
+  note.textContent = 'Shapley 值：把所有「去掉部分字」的组合平均一遍，算出每个字对男性概率的影响；各字相加 = 最终概率 − 50%。';
+  box.appendChild(note);
 
   for (const it of items) {
     const row = document.createElement('div');
